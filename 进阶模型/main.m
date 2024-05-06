@@ -114,24 +114,16 @@ C = [C, Pgmin <= Pg, Pg <= Pgmax, Qgmin <= Qg, Qg <= Qgmax];
 %支路电流约束
 C = [C, 0 <= I, I <= 11];
 %% 4.设目标函数
-C_loss = sum(sum(I .* (R * ones(1, T)))); %网损
-toc %建模时间
+f1 = sum(sum(I .* (R * ones(1, T)))); %网损
+f2 = mean((1.6 - S_IL1 ./ pload(10, :) - S_IL2 ./ pload(26, :)) / 2) %负荷削减量
+f3 = mean(mean((3 - p_wt ./ P_WT - q_wt ./ Q_WT - p_pv ./ P_PV) / 3)) %新能源消纳量
+f = f1 + f2 + f3;
+toc
 
 %% 5.设求解器
 ops = sdpsettings('solver', 'cplex');
-sol = optimize(C, C_loss, ops);
-P = value(P);
-p_pv = value(p_pv);
-p_wt = value(p_wt);
-p_ch = value(p_ch);
-p_dch = value(p_dch);
-Pg = value(Pg);
-E_ess = value(E_ess);
-C_loss = value(C_loss);
-S_IL1 = value(S_IL1);
-S_IL2 = value(S_IL2);
-V = value(V);
-I = value(I);
+sol = optimize(C, f, ops);
+
 %% 6.分析错误标志
 if sol.problem == 0
     disp('successful solved求解成功');
