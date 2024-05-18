@@ -23,12 +23,15 @@ ness = 2; %ESS数
 %节点连接方式
 upstream = zeros(nb, nl);
 dnstream = zeros(nb, nl);
+
 for t = 1:nl
     upstream(t, t) = 1;
 end
+
 for t = [1:25, 27:33, 35:44, 46:48, 50, 52:63, 65, 67]
     dnstream(t, t + 1) = 1;
 end
+
 dnstream(2, 27) = 1;
 dnstream(2, 35) = 1;
 dnstream(3, 46) = 1;
@@ -41,10 +44,10 @@ dnstream(69, 1) = 1;
 Vmax = [1.1 * 1.1 * ones(nb - 1, T); ones(1, T)];
 Vmin = [0.9 * 0.9 * ones(nb - 1, T); ones(1, T)];
 %发电机出力上下限
-Pgmax = [zeros(nb - 1, T); 10 * ones(1, T)];
+Pgmax = [zeros(nb - 1, T); 1 * ones(1, T)];
 Pgmin = [zeros(nb - 1, T); 0 * ones(1, T)];
-Qgmax = [zeros(nb - 1, T); 10 * ones(1, T)];
-Qgmin = [zeros(nb - 1, T); -10 * ones(1, T)];
+Qgmax = [zeros(nb - 1, T); 1 * ones(1, T)];
+Qgmin = [zeros(nb - 1, T); -1 * ones(1, T)];
 %% 2.设变量
 V = sdpvar(nb, T); %电压的平方
 I = sdpvar(nl, T); %电流的平方
@@ -78,13 +81,15 @@ C = [C, 0 <= p_dch <= u_dch * 1];
 C = [C, 0 <= p_ch <= u_ch * 1];
 %容量约束
 for t = 1:23
-    C = [C, E_ess(1, t + 1) == E_ess(1, t) + 0.9 * p_ch(1, t) - 0.9 * p_dch(1, t)];
+    C = [C, E_ess(1, t + 1) == E_ess(1, t) + p_ch(1, t) - p_dch(1, t)];
 end
+
 for t = 1:23
-    C = [C, E_ess(2, t + 1) == E_ess(2, t) + 0.9 * p_ch(2, t) - 0.9 * p_dch(2, t)];
+    C = [C, E_ess(2, t + 1) == E_ess(2, t) + p_ch(2, t) - p_dch(2, t)];
 end
-C = [C, 0 <= E_ess(1, :) <= 1];
-C = [C, 0 <= E_ess(2, :) <= 1];
+
+C = [C, 0.1 <= E_ess(1, :) <= 0.9];
+C = [C, 0.1 <= E_ess(2, :) <= 0.9];
 %投入节点选择
 P_dch1 = [zeros(22, T); p_dch(1, :); zeros(46, T)];
 P_ch1 = [zeros(22, T); p_ch(1, :); zeros(46, T)];
@@ -120,15 +125,62 @@ f3 = mean(mean((3 - p_wt ./ P_WT - q_wt ./ Q_WT - p_pv ./ P_PV) / 3)) %新能源
 f = f1 + f2 + f3;
 toc
 
-%% 5.设求解器
+%% 5.求解
 ops = sdpsettings('solver', 'cplex');
 sol = optimize(C, f, ops);
-
-%% 6.分析错误标志
+%分析错误
 if sol.problem == 0
     disp('successful solved求解成功');
 else
     disp('error');
-    error = P .^ 2 + Q .^ 2 - U(Line(:, 1), :) .* I;
+    error = P .^ 2 + Q .^ 2 - V(Line(:, 1), :) .* I;
     yalmiperror(sol.problem)
 end
+
+%% 6.绘图
+p_wt = value(p_wt);
+q_wt = value(q_wt);
+p_pv = value(p_pv);
+p_dch = value(p_dch);
+p_ch = value(p_ch);
+E_ess = value(E_ess);
+S_IL1 = value(S_IL1);
+S_IL2 = value(S_IL2);
+
+figure(1)
+t = 1:1:24;
+plot(t, sum(p_wt), '--k', 'linewidth', 2);
+hold on
+plot(t, sum(q_wt), '-*k', 'linewidth', 2);
+hold on
+plot(t, sum(p_pv), '--r', 'linewidth', 2);
+xlabel('时刻/h');
+ylabel('新能源出力')
+legend('风电有功', '风电无功', '光伏有功');
+
+figure(2)
+t = 1:1:24;
+plot(t, p_dch(1, :) - p_ch(1, :), '--', 'linewidth', 2);
+hold on
+plot(t, p_dch(2, :) - p_ch(2, :), '-*', 'linewidth', 2);
+xlabel('时刻/h');
+ylabel('储能出力')
+legend('ESS1', 'ESS2');
+
+figure(3)
+t = 1:1:24;
+plot(t, E_ess(1, :), '--', 'linewidth', 1.8);
+hold on
+plot(t, E_ess(2, :), '-*', 'linewidth', 1.8);
+xlabel('时刻/h');
+ylabel('SOC');
+legend('ESS1', 'ESS2');
+
+figure(4)
+t = 1:1:24;
+plot(t, S_IL1, '--', 'linewidth', 2);
+hold on
+plot(t, S_IL2, '-*', 'linewidth', 2);
+xlabel('时刻/h');
+ylabel('负荷削减');
+legend('可削减负荷1', '可削减负荷2');
