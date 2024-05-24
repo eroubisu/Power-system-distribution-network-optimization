@@ -142,7 +142,6 @@ f_loss_plan = sum(sum(I .* (R * ones(1, T)))); %网损
 f_RES_plan = mean(mean((3 - UP_P_wt ./ Pre_P_wt - UP_Q_wt ./ Pre_Q_wt - UP_P_pv ./ Pre_P_pv) / 3)); %新能源消纳量
 f = eta_loss_plan * f_loss_plan + eta_RES_plan * f_RES_plan;
 toc
-
 %% 5.求解
 %设求解器
 ops = sdpsettings('solver', 'cplex');
@@ -154,20 +153,31 @@ else
     disp('error');
     yalmiperror(sol.problem)
 end
-
 %% 6.画图
 UP_P_wt_plan = value(UP_P_wt);
 UP_Q_wt_plan = value(UP_Q_wt);
 UP_P_pv_plan = value(UP_P_pv);
+P_wt_plan = value(P_wt);
+Q_wt_plan = value(Q_wt);
+P_pv_plan = value(P_pv);
 UP_P_ess_dch_plan = value(UP_P_ess_dch);
 UP_P_ess_ch_plan = value(UP_P_ess_ch);
 SOC_ess_plan = value(SOC_ess);
 P_Gen_plan = value(P_Gen);
 Q_Gen_plan = value(Q_Gen);
-
+P_Line_plan = value(P_Line);
 %% 7.波动模型设参
 P_Gen_plan = value(P_Gen);
-RES_cspt = mean(sum(UP_P_wt_plan + UP_Q_wt_plan + UP_P_pv_plan)); %计划新能源消纳量
+areaA = mpc.areaA;
+areaB = mpc.areaB;
+areaC = mpc.areaC;
+areaD = mpc.areaD;
+RES_cspt_all = mean(sum(UP_P_wt_plan + UP_Q_wt_plan + UP_P_pv_plan)); %计划新能源消纳量
+RES_cspt_A = mean(sum(P_wt_plan(areaA, :) + Q_wt_plan(areaA, :) + P_pv_plan(areaA, :)));
+RES_cspt_B = mean(sum(P_wt_plan(areaB, :) + Q_wt_plan(areaB, :) + P_pv_plan(areaB, :)));
+RES_cspt_C = mean(sum(P_wt_plan(areaC, :) + Q_wt_plan(areaC, :) + P_pv_plan(areaC, :)));
+RES_cspt_D = mean(sum(P_wt_plan(areaD, :) + Q_wt_plan(areaD, :) + P_pv_plan(areaD, :)));
+RES_cspt = repmat([RES_cspt_A; RES_cspt_B; RES_cspt_C; RES_cspt_D], 1, T);
 Act_P_Load = mpc.Act_P_Load;
 Act_Q_Load = mpc.Act_Q_Load;
 Act_P_wt = mpc.Act_P_wt(:, 2:end); %风电有功
@@ -178,7 +188,6 @@ eta_loss_fluc = mpc.eta_loss_fluc;
 eta_RES_fluc = mpc.eta_RES_fluc;
 eta_sd_fluc = mpc.eta_sd_fluc;
 eta_ess_fluc = mpc.eta_ess_fluc;
-
 %% 8.波动模型设变量
 P_wt = zeros(num_Bus - num_wt, T); %将风电有功出力变量放入矩阵
 Q_wt = zeros(num_Bus - num_wt, T); %将风电无功出力变量放入矩阵
@@ -186,7 +195,7 @@ P_pv = zeros(num_Bus - num_pv, T); %将光伏有功出力变量放入矩阵
 P_ess_dch = zeros(num_Bus - num_ess, T);
 P_ess_ch = zeros(num_Bus - num_ess, T);
 P_FCE = P_Gen - P_Gen_plan;
-
+UP_P_FCE = [abs(P_Gen(69, :) - P_Gen_plan(69, :)) + abs(P_Line(27, :) - P_Line_plan(27, :)) + abs(P_Line(36, :) - P_Line_plan(36, :)); abs(P_Line(27, :) - P_Line_plan(27, :)); abs(P_Line(36, :) - P_Line_plan(36, :)); abs(P_Line(10, :) - P_Line_plan(10, :))]
 %% 9.波动模型设约束
 C_fluc = [];
 %% 9.1需求响应约束
@@ -225,7 +234,7 @@ C_fluc = [C_fluc, 0 <= UP_P_pv, UP_P_pv <= Act_P_pv];
 for i = 1:num_pv
     P_pv = [P_pv(1:mpc.Act_P_pv(i, 1) - 1, :); UP_P_pv(i, :); P_pv(mpc.Act_P_pv(i, 1):end, :)];
 end
-C_fluc = [C_fluc, mean(sum(UP_P_wt + UP_Q_wt + UP_P_pv)) >= min(mean(sum(Act_P_wt + Act_Q_wt + Act_P_pv)), RES_cspt)]
+C_fluc = [C_fluc, mean(sum(UP_P_wt + UP_Q_wt + UP_P_pv)) >= min(mean(sum(Act_P_wt + Act_Q_wt + Act_P_pv)), RES_cspt_all)]
 %% 9.4潮流约束
 P_bus_in = -upstream * P_Line + upstream * (I .* (R * ones(1, T))) + dnstream * P_Line; %节点注入有功
 Q_bus_in = -upstream * Q_Line + upstream * (I .* (X * ones(1, T))) + dnstream * Q_Line; %节点注入无功
@@ -242,9 +251,9 @@ C_fluc = [C_fluc, V_Bus_Min <= V, V <= V_Bus_Max];
 C_fluc = [C_fluc, P_Gen_Min <= P_Gen, P_Gen <= P_Gen_Max, Q_Gen_Min <= Q_Gen, Q_Gen <= Q_Gen_Max];
 %支路电流约束
 C_fluc = [C_fluc, 0 <= I, I <= 11];
-%FCE约束
-C_fluc = [C_fluc, P_FCE(69, :) <= RES_cspt / 2]
-
+%区域FCE约束
+%C_fluc = [C_fluc, P_FCE(69, :) <= RES_cspt_all / 2]
+C_fluc = [C_fluc, UP_P_FCE <= RES_cspt / 4];
 %% 10.波动模型设目标函数
 f_loss_fluc = sum(sum(I .* (R * ones(1, T)))); %网损
 f_RES_fluc = mean(mean((3 - UP_P_wt ./ Act_P_wt - UP_Q_wt ./ Act_Q_wt - UP_P_pv ./ Act_P_pv) / 3)); %新能源消纳量
@@ -273,8 +282,9 @@ SOC_ess_fluc = value(SOC_ess);
 UP_P_load_sd_fluc = value(UP_P_load_sd);
 P_Gen_fluc = value(P_Gen);
 Q_Gen_fluc = value(Q_Gen);
+UP_P_wt = value(UP_P_wt);
 
-figure(5)
+figure(1)
 t = 1:1:24;
 plot(t, UP_P_ess_dch_fluc(1, :) - UP_P_ess_ch_fluc(1, :), '--', 'linewidth', 2);
 hold on
@@ -283,7 +293,7 @@ xlabel('时刻/h');
 ylabel('储能出力')
 legend('ESS1', 'ESS2');
 
-figure(6)
+figure(2)
 t = 1:1:24;
 plot(t, SOC_ess_fluc(1, :), '--', 'linewidth', 1.8);
 hold on
@@ -292,7 +302,7 @@ xlabel('时刻/h');
 ylabel('SOC');
 legend('ESS1', 'ESS2');
 
-figure(7)
+figure(3)
 t = 1:1:24;
 plot(t, sum(Pre_P_wt), '-ko', 'linewidth', 1.6);
 hold on
@@ -308,3 +318,68 @@ plot(t, sum(Act_P_pv), '--b*', 'linewidth', 1.6);
 xlabel('时刻/h');
 ylabel('风力与光照强度')
 legend('预测风力P', '实际风力P', '预测风力Q', '实际风力Q', '预测光照P', '实际光照P')
+
+figure(4)
+t = 1:1:24;
+plot(t, UP_P_wt_plan(1, :), '--k*', 'linewidth', 1.6);
+hold on
+plot(t, UP_P_wt(1, :), '--r*', 'linewidth', 1.6);
+hold on
+plot(t, Pre_P_wt(1, :), '-k', 'linewidth', 1.6);
+hold on
+plot(t, Act_P_wt(1, :), '-r', 'linewidth', 1.6);
+xlabel('时刻/h');
+ylabel('风电1');
+legend('计划有功', '实际有功', '预测风力', '实际风力');
+
+figure(5)
+t = 1:1:24;
+plot(t, UP_P_wt_plan(2, :), '--k*', 'linewidth', 1.6);
+hold on
+plot(t, UP_P_wt(2, :), '--r*', 'linewidth', 1.6);
+hold on
+plot(t, Pre_P_wt(2, :), '-k', 'linewidth', 1.6);
+hold on
+plot(t, Act_P_wt(2, :), '-r', 'linewidth', 1.6);
+xlabel('时刻/h');
+ylabel('风电2');
+legend('计划有功', '实际有功', '预测风力', '实际风力');
+
+figure(6)
+t = 1:1:24;
+plot(t, UP_P_wt_plan(3, :), '--k*', 'linewidth', 1.6);
+hold on
+plot(t, UP_P_wt(3, :), '--r*', 'linewidth', 1.6);
+hold on
+plot(t, Pre_P_wt(3, :), '-k', 'linewidth', 1.6);
+hold on
+plot(t, Act_P_wt(3, :), '-r', 'linewidth', 1.6);
+xlabel('时刻/h');
+ylabel('风电3');
+legend('计划有功', '实际有功', '预测风力', '实际风力');
+
+figure(7)
+t = 1:1:24;
+plot(t, UP_P_wt_plan(4, :), '--k*', 'linewidth', 1.6);
+hold on
+plot(t, UP_P_wt(4, :), '--r*', 'linewidth', 1.6);
+hold on
+plot(t, Pre_P_wt(4, :), '-k', 'linewidth', 1.6);
+hold on
+plot(t, Act_P_wt(4, :), '-r', 'linewidth', 1.6);
+xlabel('时刻/h');
+ylabel('风电4');
+legend('计划有功', '实际有功', '预测风力', '实际风力');
+
+figure(8)
+t = 1:1:24;
+plot(t, UP_P_wt_plan(5, :), '--k*', 'linewidth', 1.6);
+hold on
+plot(t, UP_P_wt(5, :), '--r*', 'linewidth', 1.6);
+hold on
+plot(t, Pre_P_wt(5, :), '-k', 'linewidth', 1.6);
+hold on
+plot(t, Act_P_wt(5, :), '-r', 'linewidth', 1.6);
+xlabel('时刻/h');
+ylabel('风电5');
+legend('计划有功', '实际有功', '预测风力', '实际风力');
