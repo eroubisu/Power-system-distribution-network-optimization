@@ -54,7 +54,7 @@ for t = 1:num_Line
     upstream(t, t) = 1;
     dnstream(branch(t, 1), branch(t, 2)) = 1;
 end
-%电压上下限，节点1是平衡节点
+%电压上下限，节点69是平衡节点
 V_Bus_Max = [1.1 * 1.1 * ones(num_Bus - 1, T); ones(1, T)];
 V_Bus_Min = [0.9 * 0.9 * ones(num_Bus - 1, T); ones(1, T)];
 %发电机出力上下限
@@ -90,6 +90,9 @@ P_ess_ch = zeros(num_Bus - num_ess, T);
 %可削减负荷
 UP_P_load_sd = sdpvar(num_load_sd, T, 'full');
 P_load_sd = zeros(num_Bus - num_load_sd, T);
+%节点功率
+P_bus_in = -upstream * P_Line + upstream * (I .* (R * ones(1, T))) + dnstream * P_Line; %节点注入有功
+Q_bus_in = -upstream * Q_Line + upstream * (I .* (X * ones(1, T))) + dnstream * Q_Line; %节点注入无功
 %% 3.设约束
 C_plan = [];
 %% 3.1储能装置（ESS）约束
@@ -111,19 +114,20 @@ for i = 1:num_ess
     P_ess_ch = [P_ess_ch(1:mpc.ess(i, 1) - 1, :); UP_P_ess_ch(i, :); P_ess_ch(mpc.ess(i, 1):end, :)];
 end
 %% 3.2风机+光伏约束
+%出力功率约束
 C_plan = [C_plan, 0 <= UP_P_wt, UP_P_wt <= Pre_P_wt];
 C_plan = [C_plan, 0 <= UP_Q_wt, UP_Q_wt <= Pre_Q_wt];
+C_plan = [C_plan, 0 <= UP_P_pv, UP_P_pv <= Pre_P_pv];
+%投入节点选择
 for i = 1:num_wt
     P_wt = [P_wt(1:mpc.Pre_P_wt(i, 1) - 1, :); UP_P_wt(i, :); P_wt(mpc.Pre_P_wt(i, 1):end, :)];
     Q_wt = [Q_wt(1:mpc.Pre_Q_wt(i, 1) - 1, :); UP_Q_wt(i, :); Q_wt(mpc.Pre_Q_wt(i, 1):end, :)];
 end
-C_plan = [C_plan, 0 <= UP_P_pv, UP_P_pv <= Pre_P_pv];
 for i = 1:num_pv
     P_pv = [P_pv(1:mpc.Pre_P_pv(i, 1) - 1, :); UP_P_pv(i, :); P_pv(mpc.Pre_P_pv(i, 1):end, :)];
 end
 %% 3.3潮流约束
-P_bus_in = -upstream * P_Line + upstream * (I .* (R * ones(1, T))) + dnstream * P_Line; %节点注入有功
-Q_bus_in = -upstream * Q_Line + upstream * (I .* (X * ones(1, T))) + dnstream * Q_Line; %节点注入无功
+%功率平衡约束
 C_plan = [C_plan, P_bus_in + Pre_P_Load - P_Gen - P_wt - P_pv - P_ess_dch + P_ess_ch == 0];
 C_plan = [C_plan, Q_bus_in + Pre_Q_Load - Q_wt - Q_Gen == 0];
 %欧姆定律约束
@@ -132,9 +136,9 @@ C_plan = [C_plan, V(branch(:, 2), :) == V(branch(:, 1), :) - 2 * (R * ones(1, 24
 C_plan = [C_plan, V(branch(:, 1), :) .* I >= P_Line .^ 2 + Q_Line .^ 2];
 %% 3.4通用约束
 %节点电压约束
-C_plan = [C_plan, V_Bus_Min <= V, V <= V_Bus_Max];
+C_plan = [C_plan, V_Bus_Min <= V <= V_Bus_Max];
 %发电机功率约束
-C_plan = [C_plan, P_Gen_Min <= P_Gen, P_Gen <= P_Gen_Max, Q_Gen_Min <= Q_Gen, Q_Gen <= Q_Gen_Max];
+C_plan = [C_plan, P_Gen_Min <= P_Gen <= P_Gen_Max, Q_Gen_Min <= Q_Gen <= Q_Gen_Max];
 %支路电流约束
 C_plan = [C_plan, 0 <= I, I <= 11];
 %% 4.设目标函数
